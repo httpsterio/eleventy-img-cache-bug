@@ -1,0 +1,8 @@
+{
+  "name": "eleventy-img-cache-bug",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@11ty/eleventy-img": "7.0.0"
+  }
+}
