@@ -4,11 +4,13 @@ Version: `@11ty/eleventy-img` 7.0.0 (also on `main` as of 2026-09-25)
 
 ## What happens
 
-If you pass `htmlOptions.imgAttributes`, eleventy-img writes the source path of each processed image into that object. The object is part of the in-memory cache key, so the key keeps changing and the same image gets processed again.
+When you set `htmlOptions.imgAttributes`, eleventy-img writes the path of the image it just processed into that object, as `imgAttributes.src`.
 
-The output is correct, builds are just slower. It shows up whenever the same image is used more than once in a build, for example an image in a layout, a post image that also appears on a listing page, or running the transform on feed content with `renderTransforms`.
+That object is part of the in-memory cache key. So the key for an image depends on which image was processed before it. Same image, different previous image: cache miss, and the image is encoded again.
 
-In my site's build, 21 images were processed 63 times (page + Atom feed + JSON feed) and the build went from ~10s to ~30s.
+The HTML output is correct. Builds are just slower whenever an image is used more than once, for example an image in a layout, a post image that also shows on a listing page, or running the transform on feed content with `renderTransforms`.
+
+In my site's build, 21 images were encoded 63 times (page + Atom feed + JSON feed).
 
 ## Repro
 
@@ -17,28 +19,43 @@ npm install
 node repro.js
 ```
 
-`repro.js` processes two images twice each with the same options object.
+`repro.js` uses three images four times each, with one shared options object. Each image should be encoded once (~300ms) and come from the cache after that (0ms).
 
 Output on 7.0.0:
 
 ```
-a.png: 310ms
-b.png: 308ms
-a.png: 311ms   <- should be a cache hit
-b.png: 0ms
-imgAttributes after: { loading: 'lazy', src: 'a.png' }
+round 1
+  a.png   321ms   (imgAttributes.src was: -)
+  b.png   327ms   (imgAttributes.src was: a.png)
+  c.png   306ms   (imgAttributes.src was: b.png)
+round 2
+  a.png   314ms   (imgAttributes.src was: c.png)
+  b.png     1ms   (imgAttributes.src was: a.png)
+  c.png   319ms   (imgAttributes.src was: a.png)
+round 3
+  a.png     0ms   (imgAttributes.src was: c.png)
+  b.png   319ms   (imgAttributes.src was: c.png)
+  c.png     0ms   (imgAttributes.src was: b.png)
+round 4
+  a.png   310ms   (imgAttributes.src was: b.png)
+  b.png     0ms   (imgAttributes.src was: a.png)
+  c.png     0ms   (imgAttributes.src was: a.png)
 ```
 
-Whether a call hits the cache depends on which image was processed before it.
+7 encodes instead of 3. An image is a cache hit only when `imgAttributes.src` holds the same leftover value as some earlier time that image was encoded. For example `b.png` in round 2 is a hit because it follows `a.png`, same as in round 1. `c.png` in round 2 is a miss because it now follows `a.png` instead of `b.png`.
 
 With the fix below:
 
 ```
-a.png: 301ms
-b.png: 306ms
-a.png: 0ms
-b.png: 0ms
-imgAttributes after: { loading: 'lazy' }
+round 1
+  a.png   320ms   (imgAttributes.src was: -)
+  b.png   322ms   (imgAttributes.src was: -)
+  c.png   311ms   (imgAttributes.src was: -)
+round 2
+  a.png     0ms   (imgAttributes.src was: -)
+  b.png     0ms   (imgAttributes.src was: -)
+  c.png     0ms   (imgAttributes.src was: -)
+...
 ```
 
 ## Cause
@@ -50,7 +67,7 @@ let imgAttributes = this.options.htmlOptions?.imgAttributes || {};
 imgAttributes.src = this.src;
 ```
 
-This modifies the user's object instead of a copy.
+This writes into the user's object instead of a copy.
 
 ## Fix
 
